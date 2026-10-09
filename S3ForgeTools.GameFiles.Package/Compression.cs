@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.IO;
 using System.Runtime.CompilerServices;
 using Tiger;
@@ -11,16 +12,22 @@ public static class Compression
 	{
 		byte[] output = GC.AllocateUninitializedArray<byte>(memsize);
 
-		// If stream can provide buffer or small enough, read into span
-		byte[] inputBuffer = new byte[filesize];
-		stream.ReadExactly(inputBuffer, 0, filesize);
-
-		if (!Decompress(inputBuffer, output))
+		byte[] inputBuffer = ArrayPool<byte>.Shared.Rent(filesize);
+		try
 		{
-			throw new InvalidDataException("Decompression Failure");
-		}
+			stream.ReadExactly(inputBuffer, 0, filesize);
 
-		return output;
+			if (!Decompress(inputBuffer.AsSpan(0, filesize), output))
+			{
+				throw new InvalidDataException("Decompression Failure");
+			}
+
+			return output;
+		}
+		finally
+		{
+			ArrayPool<byte>.Shared.Return(inputBuffer);
+		}
 	}
 
 	public static bool Decompress(ReadOnlySpan<byte> input, Span<byte> output)

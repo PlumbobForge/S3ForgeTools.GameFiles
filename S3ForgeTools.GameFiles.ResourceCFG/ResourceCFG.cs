@@ -75,9 +75,10 @@ public class ResourceCFG
 		int priority = 0;
 		foreach (string item in list)
 		{
-			if (item.ToLower().StartsWith("priority"))
+			string trimmedItem = item.Trim();
+			if (trimmedItem.StartsWith("priority", StringComparison.OrdinalIgnoreCase))
 			{
-				string s = item.Substring(9).Trim();
+				string s = trimmedItem.Substring("priority".Length).Trim();
 				try
 				{
 					priority = int.Parse(s);
@@ -86,9 +87,10 @@ public class ResourceCFG
 				{
 				}
 			}
-			else if (item.ToLower().StartsWith("packedfile"))
+			else if (trimmedItem.StartsWith("packedfile", StringComparison.OrdinalIgnoreCase))
 			{
-				string text = Path.Combine(Path.GetDirectoryName(FileName), item.Substring(11).Trim());
+				string pathPart = trimmedItem.Substring("packedfile".Length).Trim().Trim('"', '\'');
+				string text = Path.Combine(Path.GetDirectoryName(FileName) ?? "", pathPart);
 				if (text.Contains("*"))
 				{
 					ExpandAndAdd(priority, text);
@@ -98,7 +100,10 @@ public class ResourceCFG
 					Entries.Add(new ResourceCFGEntry(priority, text));
 				}
 			}
-			else if (!item.ToLower().StartsWith("filetype") && !item.ToLower().StartsWith("directoryfiles") && !item.ToLower().StartsWith("group") && !item.ToLower().StartsWith("scan"))
+			else if (!trimmedItem.StartsWith("filetype", StringComparison.OrdinalIgnoreCase) &&
+			         !trimmedItem.StartsWith("directoryfiles", StringComparison.OrdinalIgnoreCase) &&
+			         !trimmedItem.StartsWith("group", StringComparison.OrdinalIgnoreCase) &&
+			         !trimmedItem.StartsWith("scan", StringComparison.OrdinalIgnoreCase))
 			{
 			}
 		}

@@ -84,12 +84,14 @@ public class DBPFPackageBuilder : IDisposable
 
 	private void GenerateBlank()
 	{
-		byte[] array = new byte[96];
-		BinaryWriter binaryWriter = new BinaryWriter(new MemoryStream(array, 0, 96, writable: true));
-		binaryWriter.Write(new char[4] { 'D', 'B', 'P', 'F' });
-		binaryWriter.Write(2u);
-		binaryWriter.BaseStream.Position = 60L;
-		binaryWriter.Write(3u);
+		Span<byte> array = stackalloc byte[96];
+		array.Clear();
+		array[0] = (byte)'D';
+		array[1] = (byte)'B';
+		array[2] = (byte)'P';
+		array[3] = (byte)'F';
+		BinaryPrimitives.WriteUInt32LittleEndian(array.Slice(4, 4), 2u);
+		BinaryPrimitives.WriteUInt32LittleEndian(array.Slice(60, 4), 3u);
 		if (IsEncrypted)
 		{
 			for (int i = 0; i < 96; i++)
@@ -97,13 +99,17 @@ public class DBPFPackageBuilder : IDisposable
 				array[i] ^= DBPFPackage.EncryptKey[i];
 			}
 		}
-		DataStore.Write(array, 0, 96);
+		DataStore.Write(array);
 		_currentLength = 96;
-		binaryWriter.Close();
 	}
 
 	private void GenerateIndex()
 	{
+		// Sort resources strictly by (Type, Group, Instance) prior to generating index.
+		// EA DBPF standard expects sorted index tables, enabling fast binary search lookups in-game
+		// and drastically reducing engine hitching during CAS and catalog browsing.
+		Resources.Sort((a, b) => a.Key.CompareTo(b.Key));
+
 		uint indexOffset = (uint)_currentLength;
 		int indexSize = 4 + (Resources.Count * 32);
 		byte[] indexBuffer = ArrayPool<byte>.Shared.Rent(indexSize);

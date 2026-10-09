@@ -29,12 +29,10 @@ public class ResourceEntry : IDisposable
 
 	public int ChunkLength => _ChunkLength;
 
-	public int Priority { get; set; }
-
-	public ResourceEntry(Stream Datastore, TGI_Key Key, long ChunkOffset, int ChunkLength, int ResourceLength, bool IsCompressed, bool IsEncrypted)
+	public ResourceEntry(Stream SourceStream, TGI_Key ResourceKey, long ChunkOffset, int ChunkLength, int ResourceLength, bool IsCompressed, bool IsEncrypted)
 	{
-		DataStore = Datastore;
-		this.Key = Key;
+		DataStore = SourceStream;
+		Key = ResourceKey;
 		_ChunkOffset = ChunkOffset;
 		_ChunkLength = ChunkLength;
 		_ResourceLength = ResourceLength;
@@ -42,10 +40,10 @@ public class ResourceEntry : IDisposable
 		_IsEncrypted = IsEncrypted;
 	}
 
-	public ResourceEntry(Stream DataStore, TGI_Key Key)
+	public ResourceEntry(Stream SourceStream, TGI_Key ResourceKey)
 	{
-		this.DataStore = DataStore;
-		this.Key = Key;
+		DataStore = SourceStream;
+		Key = ResourceKey;
 		_ChunkOffset = 0L;
 		_ChunkLength = (int)DataStore.Length;
 		_ResourceLength = (int)DataStore.Length;
@@ -65,23 +63,39 @@ public class ResourceEntry : IDisposable
 
 	public byte[] Read()
 	{
-		byte[] raw = ReadRaw();
 		if (!IsCompressed)
 		{
-			return raw;
+			return ReadRaw();
 		}
 
-		byte[] output = GC.AllocateUninitializedArray<byte>(_ResourceLength);
-		if (!Compression.Decompress(raw, output))
+		byte[] rentedRaw = ArrayPool<byte>.Shared.Rent(_ChunkLength);
+		try
 		{
-			throw new InvalidDataException("Decompression Failure");
+			lock (DataStore)
+			{
+				DataStore.Position = _ChunkOffset;
+				if (DataStore.Read(rentedRaw, 0, _ChunkLength) != _ChunkLength)
+				{
+					throw new InvalidDataException("Unexpected End of Data");
+				}
+			}
+
+			byte[] output = GC.AllocateUninitializedArray<byte>(_ResourceLength);
+			if (!Compression.Decompress(rentedRaw.AsSpan(0, _ChunkLength), output))
+			{
+				throw new InvalidDataException("Decompression Failure");
+			}
+			return output;
 		}
-		return output;
+		finally
+		{
+			ArrayPool<byte>.Shared.Return(rentedRaw);
+		}
 	}
 
 	public byte[] ReadRaw()
 	{
-		byte[] array = new byte[_ChunkLength];
+		byte[] array = GC.AllocateUninitializedArray<byte>(_ChunkLength);
 		lock (DataStore)
 		{
 			DataStore.Position = _ChunkOffset;
@@ -194,38 +208,29 @@ public class ResourceEntry : IDisposable
 	{
 		if (Compress == IsCompressed)
 		{
-			return false;
+			return true;
 		}
 		if (Compress)
 		{
-			byte[] array = Read();
-			if (array.Length < 16)
+			byte[] uncompressed = Read();
+			int uncompressedLength = uncompressed.Length;
+			if (Tiger.DBPFCompression.Compress(uncompressed, out byte[] compressed, level))
 			{
-				return false;
-			}
-			if (Tiger.DBPFCompression.Compress(array, out byte[] buffer, level) && buffer != array)
-			{
-				DataStore = new MemoryStream(buffer, writable: false);
+				DataStore = new MemoryStream(compressed);
 				IsCompressed = true;
 				_ChunkOffset = 0L;
-				_ChunkLength = (int)DataStore.Length;
-				_ResourceLength = array.Length;
+				_ChunkLength = compressed.Length;
+				_ResourceLength = uncompressedLength;
 				return true;
 			}
 			return false;
 		}
-		Stream stream = GetStream();
-		DataStore = stream;
+		byte[] array = Read();
+		ChangeStream(new MemoryStream(array));
 		IsCompressed = false;
-		_ChunkOffset = 0L;
-		_ChunkLength = (int)DataStore.Length;
-		_ResourceLength = (int)DataStore.Length;
+		_ResourceLength = array.Length;
+		_ChunkLength = array.Length;
 		return true;
-	}
-
-	public override string ToString()
-	{
-		return Key.ToString();
 	}
 
 	public void Dispose()
@@ -238,15 +243,7 @@ public class ResourceEntry : IDisposable
 	{
 		if (!disposed)
 		{
-			if (disposing)
-			{
-			}
 			disposed = true;
 		}
-	}
-
-	~ResourceEntry()
-	{
-		Dispose(disposing: false);
 	}
 }
